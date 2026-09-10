@@ -30,7 +30,7 @@ class Tokenizer:
 
 
 # Training text
-text = "I am learning Python. Python is powerful."
+text = "This is just an prototype of tokenizer,to show how an sentence get's tokenizied.."
 
 # Create tokenizer
 tokenizer = Tokenizer()

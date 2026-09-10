@@ -23,7 +23,7 @@ class Embedding:
 
 
 # Our vocabulary has 7 tokens
-vocab_size = 7
+vocab_size = 10
 
 # We'll use a tiny 4-dimensional embedding
 embedding_size = 4

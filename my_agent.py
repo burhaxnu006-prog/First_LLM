@@ -1,0 +1,613 @@
+```python
+import ast
+import json
+import datetime
+import operator
+from typing import Any, Callable, Dict
+
+
+class SimpleAgent:
+    """A lightweight offline AI-agent framework for Android/Termux."""
+
+    MEMORY_FILE = "memory.json"
+
+    def __init__(self, name: str = "OfflineAgent"):
+        self.name = name
+        self.memory = []
+        self.tools: Dict[str, Dict[str, Any]] = {}
+
+        self.load_memory()
+        self.register_default_tools()
+
+    # ============================================================
+    # MEMORY SYSTEM
+    # ============================================================
+
+    def load_memory(self):
+        """Load memory from disk."""
+        try:
+            with open(self.MEMORY_FILE, "r", encoding="utf-8") as file:
+                data = json.load(file)
+
+                if isinstance(data, list):
+                    self.memory = data
+
+        except FileNotFoundError:
+            self.memory = []
+
+        except (json.JSONDecodeError, OSError):
+            print("⚠ Could not load memory. Starting fresh.")
+            self.memory = []
+
+    def save_memory(self):
+        """Save memory to disk."""
+        try:
+            with open(self.MEMORY_FILE, "w", encoding="utf-8") as file:
+                json.dump(
+                    self.memory,
+                    file,
+                    indent=2,
+                    ensure_ascii=False
+                )
+
+        except OSError as error:
+            print(f"⚠ Memory save error: {error}")
+
+    def add_memory(self, role: str, content: str):
+        """Add an entry to memory."""
+        entry = {
+            "timestamp": datetime.datetime.now().isoformat(
+                timespec="seconds"
+            ),
+            "role": role,
+            "content": content
+        }
+
+        self.memory.append(entry)
+        self.save_memory()
+
+    # ============================================================
+    # TOOL SYSTEM
+    # ============================================================
+
+    def register_tool(
+        self,
+        name: str,
+        func: Callable,
+        description: str
+    ):
+        """Register a tool with the agent."""
+
+        self.tools[name] = {
+            "function": func,
+            "description": description
+        }
+
+        print(f"✓ Tool registered: {name}")
+
+    def execute_tool(self, tool_name: str, *args):
+        """Execute a registered tool."""
+
+        if tool_name not in self.tools:
+            return f"❌ Tool '{tool_name}' not found."
+
+        try:
+            function = self.tools[tool_name]["function"]
+            return function(*args)
+
+        except Exception as error:
+            return f"❌ Tool error: {error}"
+
+    def get_tools_list(self) -> str:
+        """Return all available tools."""
+
+        if not self.tools:
+            return "No tools available."
+
+        lines = []
+
+        for name, tool in self.tools.items():
+            lines.append(
+                f"• {name}: {tool['description']}"
+            )
+
+        return "\n".join(lines)
+
+    # ============================================================
+    # DEFAULT TOOLS
+    # ============================================================
+
+    def register_default_tools(self):
+        """Register built-in offline tools."""
+
+        # --------------------------------------------------------
+        # TIME TOOL
+        # --------------------------------------------------------
+
+        self.register_tool(
+            "get_time",
+            self.get_time,
+            "Get the current date and time"
+        )
+
+        # --------------------------------------------------------
+        # CALCULATOR TOOL
+        # --------------------------------------------------------
+
+        self.register_tool(
+            "calculate",
+            self.calculate,
+            "Calculate mathematical expressions safely"
+        )
+
+        # --------------------------------------------------------
+        # SAVE NOTE TOOL
+        # --------------------------------------------------------
+
+        self.register_tool(
+            "save_note",
+            self.save_note,
+            "Save a note to persistent memory"
+        )
+
+        # --------------------------------------------------------
+        # MEMORY TOOL
+        # --------------------------------------------------------
+
+        self.register_tool(
+            "get_memory",
+            self.get_memory,
+            "View saved conversation memory"
+        )
+
+        # --------------------------------------------------------
+        # CLEAR MEMORY TOOL
+        # --------------------------------------------------------
+
+        self.register_tool(
+            "clear_memory",
+            self.clear_memory,
+            "Delete all saved memory"
+        )
+
+        # --------------------------------------------------------
+        # STATUS TOOL
+        # --------------------------------------------------------
+
+        self.register_tool(
+            "status",
+            self.get_status,
+            "Show agent status"
+        )
+
+    # ============================================================
+    # TOOL IMPLEMENTATIONS
+    # ============================================================
+
+    def get_time(self):
+        """Return current date and time."""
+
+        now = datetime.datetime.now()
+
+        return now.strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+
+    # ------------------------------------------------------------
+
+    def calculate(self, expression: str):
+        """
+        Safely calculate a mathematical expression.
+
+        This does NOT use eval().
+        """
+
+        expression = expression.strip()
+
+        if not expression:
+            return "❌ Please provide a calculation."
+
+        try:
+            tree = ast.parse(
+                expression,
+                mode="eval"
+            )
+
+            result = self._evaluate_math(tree.body)
+
+            return result
+
+        except Exception:
+            return "❌ Invalid mathematical expression."
+
+    def _evaluate_math(self, node):
+        """Safely evaluate supported mathematical AST nodes."""
+
+        operations = {
+            ast.Add: operator.add,
+            ast.Sub: operator.sub,
+            ast.Mult: operator.mul,
+            ast.Div: operator.truediv,
+            ast.FloorDiv: operator.floordiv,
+            ast.Mod: operator.mod,
+            ast.Pow: operator.pow,
+        }
+
+        unary_operations = {
+            ast.UAdd: operator.pos,
+            ast.USub: operator.neg,
+        }
+
+        # Numbers
+        if isinstance(node, ast.Constant):
+
+            if isinstance(node.value, (int, float)):
+                return node.value
+
+            raise ValueError("Invalid number")
+
+        # Binary operations
+        if isinstance(node, ast.BinOp):
+
+            if type(node.op) not in operations:
+                raise ValueError("Operation not allowed")
+
+            left = self._evaluate_math(node.left)
+            right = self._evaluate_math(node.right)
+
+            return operations[type(node.op)](
+                left,
+                right
+            )
+
+        # Unary operations
+        if isinstance(node, ast.UnaryOp):
+
+            if type(node.op) not in unary_operations:
+                raise ValueError("Operation not allowed")
+
+            value = self._evaluate_math(node.operand)
+
+            return unary_operations[type(node.op)](
+                value
+            )
+
+        raise ValueError("Expression not allowed")
+
+    # ------------------------------------------------------------
+
+    def save_note(self, text: str):
+        """Save a user note."""
+
+        text = text.strip()
+
+        if not text:
+            return "❌ Cannot save an empty note."
+
+        self.add_memory(
+            "note",
+            text
+        )
+
+        return f"✓ Note saved: {text}"
+
+    # ------------------------------------------------------------
+
+    def get_memory(self):
+        """Return saved memory."""
+
+        if not self.memory:
+            return "No memory stored."
+
+        lines = []
+
+        for index, entry in enumerate(self.memory, start=1):
+
+            timestamp = entry.get(
+                "timestamp",
+                "unknown"
+            )
+
+            role = entry.get(
+                "role",
+                "unknown"
+            )
+
+            content = entry.get(
+                "content",
+                ""
+            )
+
+            lines.append(
+                f"{index}. [{timestamp}] "
+                f"{role}: {content}"
+            )
+
+        return "\n".join(lines)
+
+    # ------------------------------------------------------------
+
+    def clear_memory(self):
+        """Clear all memory."""
+
+        self.memory = []
+        self.save_memory()
+
+        return "✓ Memory cleared."
+
+    # ------------------------------------------------------------
+
+    def get_status(self):
+        """Return agent status."""
+
+        return (
+            f"🤖 Agent: {self.name}\n"
+            f"🔧 Tools: {len(self.tools)}\n"
+            f"🧠 Memory entries: {len(self.memory)}\n"
+            f"💾 Memory file: {self.MEMORY_FILE}\n"
+            f"🌐 Mode: Offline"
+        )
+
+    # ============================================================
+    # COMMAND ROUTER
+    # ============================================================
+
+    def process(self, user_input: str) -> str:
+        """Process a user request and select a tool."""
+
+        user_input = user_input.strip()
+
+        if not user_input:
+            return "Please enter something."
+
+        # Save user's message
+        self.add_memory(
+            "user",
+            user_input
+        )
+
+        text = user_input.lower()
+
+        response = ""
+
+        # --------------------------------------------------------
+        # TIME
+        # --------------------------------------------------------
+
+        if (
+            text == "time"
+            or "what time" in text
+            or "current time" in text
+            or "date and time" in text
+        ):
+            result = self.execute_tool(
+                "get_time"
+            )
+
+            response = f"⏰ {result}"
+
+        # --------------------------------------------------------
+        # CALCULATOR
+        # --------------------------------------------------------
+
+        elif (
+            text.startswith("calc ")
+            or text.startswith("calculate ")
+            or text.startswith("math ")
+        ):
+
+            expression = user_input.split(
+                " ",
+                1
+            )[1]
+
+            result = self.execute_tool(
+                "calculate",
+                expression
+            )
+
+            response = f"🧮 {result}"
+
+        # --------------------------------------------------------
+        # SAVE NOTE
+        # --------------------------------------------------------
+
+        elif (
+            text.startswith("note ")
+            or text.startswith("save ")
+            or text.startswith("remember ")
+        ):
+
+            if text.startswith("note "):
+                note = user_input[5:]
+
+            elif text.startswith("save "):
+                note = user_input[5:]
+
+            else:
+                note = user_input[9:]
+
+            response = self.execute_tool(
+                "save_note",
+                note
+            )
+
+        # --------------------------------------------------------
+        # MEMORY
+        # --------------------------------------------------------
+
+        elif (
+            text == "memory"
+            or text == "notes"
+            or text == "history"
+            or "show memory" in text
+        ):
+
+            response = self.execute_tool(
+                "get_memory"
+            )
+
+        # --------------------------------------------------------
+        # CLEAR MEMORY
+        # --------------------------------------------------------
+
+        elif (
+            text == "clear memory"
+            or text == "clear notes"
+            or text == "forget everything"
+        ):
+
+            response = self.execute_tool(
+                "clear_memory"
+            )
+
+        # --------------------------------------------------------
+        # HELP / TOOLS
+        # --------------------------------------------------------
+
+        elif (
+            text == "help"
+            or text == "tools"
+            or "available tools" in text
+        ):
+
+            response = (
+                "🔧 Available tools:\n"
+                + self.get_tools_list()
+            )
+
+        # --------------------------------------------------------
+        # STATUS
+        # --------------------------------------------------------
+
+        elif text == "status":
+
+            response = self.execute_tool(
+                "status"
+            )
+
+        # --------------------------------------------------------
+        # GREETINGS
+        # --------------------------------------------------------
+
+        elif text in {
+            "hi",
+            "hello",
+            "hey",
+            "namaste"
+        }:
+
+            response = (
+                f"Hello! 👋 I'm {self.name}.\n"
+                "Type 'help' to see what I can do."
+            )
+
+        # --------------------------------------------------------
+        # UNKNOWN REQUEST
+        # --------------------------------------------------------
+
+        else:
+
+            response = (
+                f"I understood your message:\n"
+                f"\"{user_input}\"\n\n"
+                "I don't have a tool for this yet."
+            )
+
+        # Save agent response
+        self.add_memory(
+            "agent",
+            response
+        )
+
+        return response
+
+    # ============================================================
+    # INTERACTIVE CHAT
+    # ============================================================
+
+    def start(self):
+        """Start interactive agent."""
+
+        print()
+        print("=" * 55)
+        print(f"🤖 {self.name}")
+        print("=" * 55)
+
+        print("Mode: OFFLINE")
+        print()
+        print("Commands:")
+        print("  help")
+        print("  time")
+        print("  calc 10 + 5 * 2")
+        print("  note Learn Python")
+        print("  memory")
+        print("  clear memory")
+        print("  status")
+        print("  quit")
+        print()
+
+        while True:
+
+            try:
+
+                user_input = input("You: ").strip()
+
+                if not user_input:
+                    continue
+
+                if user_input.lower() in {
+                    "quit",
+                    "exit"
+                }:
+
+                    print(
+                        "\nGoodbye! 👋"
+                    )
+
+                    break
+
+                response = self.process(
+                    user_input
+                )
+
+                print(
+                    f"Agent: {response}\n"
+                )
+
+            except KeyboardInterrupt:
+
+                print(
+                    "\n\nExiting..."
+                )
+
+                break
+
+            except EOFError:
+
+                print(
+                    "\n\nInput closed."
+                )
+
+                break
+
+            except Exception as error:
+
+                print(
+                    f"\n❌ Unexpected error: "
+                    f"{error}\n"
+                )
+
+
+# ================================================================
+# PROGRAM ENTRY POINT
+# ================================================================
+
+if __name__ == "__main__":
+
+    agent = SimpleAgent(
+        name="OfflineAgent"
+    )
+
+    agent.start()
+```
